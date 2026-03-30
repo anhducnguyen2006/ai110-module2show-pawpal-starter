@@ -7,18 +7,27 @@
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
-Owner: name, available time per day, preferences (for example preferred walk times, tasks to avoid at night).
-Pet: name, species, age, health notes.
-Task: type (walk/feed/med/groom/enrichment), duration, priority, frequency, time window, required flag, notes.
-Constraint: available minutes, blocked times, max tasks per day, preference rules.
-DailyPlan: date, selected tasks, schedule blocks, rationale/explanations.
+The design has six classes with clear, separated responsibilities:
+
+- **Owner** — holds the owner's name and free-text preferences (e.g. "no walks after 9pm"). Acts as the root of the object graph: it owns a list of Pets and a Constraint.
+- **Constraint** — a dedicated config object that captures all scheduling limits: available minutes per day, blocked time windows, max tasks per day, and structured preference rules. Keeping this separate from Owner means the scheduler can read one object instead of picking fields off the owner.
+- **Pet** — stores a pet's identity and health notes, and owns a list of CareTasks. Responsible for knowing which tasks are due on a given date.
+- **CareTask** — a single care activity (walk, feed, med, groom, enrichment). Holds scheduling metadata (duration, priority, frequency, time window, required flag) and tracks when it was last completed. Knows how to report whether it is due.
+- **DailyPlan** — the output of the scheduler. Holds the tasks that were scheduled, the tasks that were deferred (with reasons), time-block labels, and a rationale string. Exposes a computed `total_minutes_used` so the scheduler can check budget at any time.
+- **Planner** — the scheduling engine. Takes an Owner (with its Pets and Constraint) and a date, ranks tasks by priority and preferences, fits them into the time budget, and returns a DailyPlan.
 
 **b. Design changes**
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
 
-N/A
+Three changes were made after reviewing the skeleton against the UI and scheduling logic:
+
+1. **`priority` changed from `int` to `str`** — The original UML used an integer (1–3). The Streamlit UI in `app.py` collects priority as `"low"`, `"medium"`, or `"high"`. Keeping an int would have required a conversion layer at every boundary; using the same string values the UI produces removes that friction.
+
+2. **`Planner.generate_plan` dropped the `pets` parameter** — The original signature was `generate_plan(owner, pets, on_date)`. Since `Owner` already holds a `pets` list, passing pets separately was redundant and created a potential bug: a caller could pass pets that don't belong to the owner. The method now reads `owner.pets` directly, making the relationship explicit and safe.
+
+3. **`DailyPlan.total_minutes_used` added as a computed property** — The scheduler needs to check remaining time budget after each task is added. Without this, `fit_to_time_budget` would have to recompute the sum on every iteration. A single `@property` that sums `duration_minutes` across `scheduled_tasks` solves this cleanly and keeps the budget logic out of `Planner`.
 
 ---
 
