@@ -335,6 +335,131 @@ def test_generate_plan_schedule_is_chronological():
 
 
 # ---------------------------------------------------------------------------
+# Required verification suite
+# Three explicit anchor tests that directly cover the stated requirements.
+# Each docstring explains what is being checked and why the assertion matters.
+# ---------------------------------------------------------------------------
+
+def test_sorting_correctness_tasks_in_chronological_order():
+    """
+    REQUIREMENT: Sorting — verify tasks are returned in chronological window order.
+
+    What this tests
+    ---------------
+    sort_by_time() accepts a list of CareTask objects in any order and must
+    return them sorted morning → midday → afternoon → evening → any.
+
+    Why it matters
+    --------------
+    The scheduler outputs tasks in the order the owner should do them.
+    If sorting is wrong, an evening grooming session could appear before a
+    morning walk, making the plan confusing and unusable.
+
+    How to read the assertion
+    -------------------------
+    We build a list with windows deliberately scrambled (evening, any, morning,
+    afternoon), call sort_by_time(), and confirm the resulting window sequence
+    matches the canonical order exactly.
+    """
+    planner = Planner()
+    scrambled = [
+        task(task_type="groom",       window="evening"),
+        task(task_type="enrichment",  window="any"),
+        task(task_type="walk",        window="morning"),
+        task(task_type="feed",        window="afternoon"),
+    ]
+    result = planner.sort_by_time(scrambled)
+    assert [t.time_window for t in result] == ["morning", "afternoon", "evening", "any"]
+
+
+def test_recurrence_logic_completed_daily_task_reappears_in_tomorrows_plan():
+    """
+    REQUIREMENT: Recurrence — marking a daily task complete today makes it due again tomorrow.
+
+    What this tests
+    ---------------
+    After mark_completed(TODAY) is called, next_due_on is set to TOMORROW via
+    timedelta(days=1). When generate_plan is run for TOMORROW's date, the task
+    must reappear in scheduled_tasks — confirming the recurrence is picked up
+    by the full scheduling pipeline, not just the is_due() method in isolation.
+
+    Why it matters
+    --------------
+    A pet care planner only works if recurring tasks actually recur. Without
+    this end-to-end check, a bug in generate_plan could silently discard
+    recurring tasks even when is_due() returns True.
+
+    How to read the assertion
+    -------------------------
+    1. Create a pet with one daily walk and mark it done today.
+    2. Run generate_plan for TODAY → walk must NOT be in the plan (already done).
+    3. Run generate_plan for TOMORROW → walk MUST be back in the plan.
+    """
+    pet = Pet("Mochi", "dog", 3)
+    walk = task(task_type="walk", duration=20, frequency="daily")
+    pet.add_task(walk)
+    walk.mark_completed(TODAY)
+
+    owner = Owner("Jordan", constraint=Constraint(available_minutes=120))
+    owner.add_pet(pet)
+
+    plan_today    = Planner().generate_plan(owner, TODAY)
+    plan_tomorrow = Planner().generate_plan(owner, TOMORROW)
+
+    today_types    = [t.task_type for t in plan_today.scheduled_tasks]
+    tomorrow_types = [t.task_type for t in plan_tomorrow.scheduled_tasks]
+
+    assert "walk" not in today_types,    "completed task must not be re-scheduled today"
+    assert "walk" in tomorrow_types,     "daily task must reappear in tomorrow's plan"
+
+
+def test_conflict_detection_flags_duplicate_time_windows():
+    """
+    REQUIREMENT: Conflict detection — the Scheduler flags tasks scheduled at the same time.
+
+    What this tests
+    ---------------
+    detect_conflicts() must return at least one warning when two tasks belonging
+    to the same pet are placed in the same time window.  The warning identifies
+    the pet by name and the window where the clash occurs.
+
+    Why it matters
+    --------------
+    Without conflict detection, a pet owner would see a plan that is physically
+    impossible — e.g., "walk Rex at 8 am AND groom Rex at 8 am".  The warning
+    doesn't block the plan (the system stays usable) but it surfaces the problem
+    so the owner can adjust window assignments.
+
+    How to read the assertion
+    -------------------------
+    We build a plan manually with two tasks for "Rex" both in "morning", then
+    call detect_conflicts().  We assert (a) at least one warning is returned,
+    and (b) the warning mentions both the pet name and the window, so the owner
+    knows exactly what conflicts.
+    """
+    planner   = Planner()
+    pet       = Pet("Rex", "dog", 2)
+    walk      = task(task_type="walk",  duration=20, window="morning")
+    groom     = task(task_type="groom", duration=15, window="morning")
+    pet.add_task(walk)
+    pet.add_task(groom)
+
+    owner = Owner("Sam", constraint=Constraint(available_minutes=999))
+    owner.add_pet(pet)
+
+    # Build the plan manually so we control exactly which tasks are "scheduled"
+    plan = DailyPlan(plan_date=TODAY)
+    plan.add_scheduled_task(walk)
+    plan.add_scheduled_task(groom)
+
+    conflicts = planner.detect_conflicts(plan, owner.constraint, owner)
+
+    assert len(conflicts) > 0,                              "expected at least one conflict warning"
+    assert any("Rex" in c for c in conflicts),              "warning must name the pet"
+    assert any("morning" in c for c in conflicts),          "warning must name the window"
+
+
+# ---------------------------------------------------------------------------
 # 8 – filter_tasks
 # ---------------------------------------------------------------------------
 
