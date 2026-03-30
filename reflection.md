@@ -7,10 +7,18 @@
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
+Owner: name, available time per day, preferences (for example preferred walk times, tasks to avoid at night).
+Pet: name, species, age, health notes.
+Task: type (walk/feed/med/groom/enrichment), duration, priority, frequency, time window, required flag, notes.
+Constraint: available minutes, blocked times, max tasks per day, preference rules.
+DailyPlan: date, selected tasks, schedule blocks, rationale/explanations.
+
 **b. Design changes**
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
+
+N/A
 
 ---
 

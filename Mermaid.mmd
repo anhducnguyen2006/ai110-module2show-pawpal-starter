@@ -1,0 +1,61 @@
+classDiagram
+    class Owner {
+      +String name
+      +List~String~ preferences
+      +addPet(pet: Pet)
+    }
+
+    class Constraint {
+      +int availableMinutes
+      +List~String~ blockedTimes
+      +int maxTasksPerDay
+      +List~String~ preferenceRules
+    }
+
+    class Pet {
+      +String name
+      +String species
+      +int age
+      +String healthNotes
+      +addTask(task: CareTask)
+      +getDueTasks(onDate: date) List~CareTask~
+    }
+
+    class CareTask {
+      +String taskType
+      +int durationMinutes
+      +int priority
+      +String frequency
+      +String timeWindow
+      +bool required
+      +String notes
+      +date lastCompletedOn
+      +isDue(onDate: date) bool
+      +markCompleted(onDate: date)
+    }
+
+    class DailyPlan {
+      +date planDate
+      +List~CareTask~ scheduledTasks
+      +List~CareTask~ deferredTasks
+      +List~String~ scheduleBlocks
+      +String rationale
+      +addScheduledTask(task: CareTask)
+      +addDeferredTask(task: CareTask, reason: String)
+      +explainChoices() String
+    }
+
+    class Planner {
+      +generatePlan(owner: Owner, pets: List~Pet~, onDate: date) DailyPlan
+      +rankTasks(tasks: List~CareTask~, constraint: Constraint) List~CareTask~
+      +fitToTimeBudget(tasks: List~CareTask~, constraint: Constraint) List~CareTask~
+    }
+
+    Owner "1" *-- "1" Constraint : governs
+    Owner "1" o-- "1..*" Pet : owns
+    Pet "1" o-- "0..*" CareTask : needs
+    DailyPlan "1" *-- "0..*" CareTask : schedules
+    Planner ..> Owner : reads
+    Planner ..> Constraint : applies
+    Planner ..> Pet : reads tasks from
+    Planner ..> DailyPlan : builds
