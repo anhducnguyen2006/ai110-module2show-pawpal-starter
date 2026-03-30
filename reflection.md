@@ -75,13 +75,37 @@ This is reasonable for a pet care planning app because the goal is to give the o
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The test suite in `tests/test_pawpal.py` covers 35 tests across eight areas:
+
+1. **Task completion and recurrence** — `mark_completed` records the date and sets `next_due_on` correctly for `daily`, `weekly`, and `twice_daily` frequencies. The `twice_daily` case was the trickiest: the task must remain due on the same day after the first completion, and advance to the next day only after the second. These tests mattered because an off-by-one bug in `next_due_on` would silently skip a pet's medication or double-schedule it.
+
+2. **Pet and owner management** — Tasks are stored in the right pet's list; an owner or pet with no tasks returns an empty list without raising. Guarding the empty-list case was important because `generate_plan` iterates over these lists unconditionally.
+
+3. **`rank_tasks`** — Required tasks always outrank optional ones regardless of priority level; within the required tier, tasks sort `high → medium → low`. An empty input returns empty output. Getting this right is the foundation of the entire scheduling pipeline — if a required medication ranked below an optional enrichment activity, the owner would get the wrong plan.
+
+4. **`fit_to_time_budget`** — Covers basic selection, gap-filling (a smaller task can still be picked up after a large one is skipped), the exact boundary condition (`≤` not `<`), the nothing-fits edge case, and the `max_tasks_per_day` cap. The gap-filling test was the most important: the greedy algorithm's ability to keep scanning after a rejection is what separates it from a simple prefix-fill.
+
+5. **`sort_by_time`** — Scrambled windows are sorted to the canonical order; an unknown window label sorts last rather than raising a `ValueError`. The unknown-window case prevents a crash if a user types a custom window name.
+
+6. **`detect_conflicts`** — Four distinct warnings are each verified: no-conflict happy path, window overload (> 60 min in one slot), same-pet overlap, and cross-pet collision. Conflict detection is the feature most likely to produce false positives, so each case needed an isolated, deterministic test that builds the plan manually.
+
+7. **`generate_plan` integration** — End-to-end tests confirm that a completed task disappears from today's plan, a daily task reappears in tomorrow's plan (the full recurrence pipeline, not just `is_due`), all tasks are deferred when the budget is 5 minutes, and an owner with no pets produces an empty plan without crashing.
+
+8. **`filter_tasks`** — Filtering by type, by pet, no-match returning empty, and combined AND-filters are each tested. These tests matter because the live UI filter panel calls these methods directly; a silent logic error would show the user the wrong task list.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+**★★★★☆ (4 / 5)**
+
+The happy paths and the most important edge cases are well covered. The recurrence end-to-end test (`test_recurrence_logic_completed_daily_task_reappears_in_tomorrows_plan`) gives particular confidence because it runs the full `generate_plan` pipeline twice rather than checking `is_due` in isolation.
+
+One star is withheld because:
+
+- **Time windows are labels, not clock times.** A true overlap between two "morning" tasks (one at 8:00, one at 8:15) cannot be detected with the current model.
+- **No UI tests.** `app.py` session-state wiring, form submission, and widget interactions are not covered by pytest.
+- **Preference-rule parsing is pattern-matched.** Only rules matching `"no <type> after <time>"` are understood; a rule phrased differently is silently ignored.
+
+If I had more time I would add: a preference-rule violation test (the fourth conflict type has no dedicated unit test), a `twice_daily` task in `generate_plan` to verify it appears twice before advancing to the next day, and a test for `explain_choices` output format.
 
 ---
 
@@ -89,12 +113,12 @@ This is reasonable for a pet care planning app because the goal is to give the o
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The clean separation between `pawpal_system.py` and `app.py` paid off throughout the project. Because all scheduling logic lived in pure Python classes with no Streamlit dependencies, every algorithm could be developed and tested in isolation before touching the UI. The `Planner` methods (`rank_tasks`, `fit_to_time_budget`, `sort_by_time`, `filter_tasks`, `detect_conflicts`) were each small enough to reason about independently, which made both writing tests and debugging straightforward. The session-state vault pattern in `app.py` also worked well — keeping `owner`, `pets`, `tasks`, and `plan` as explicit keys made it easy to trace exactly what data each form section was reading and writing.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+The biggest limitation is that time windows are labels, not actual clock intervals. In a next iteration I would replace the five named windows with a proper `(start_time, end_time)` representation, which would allow genuine overlap detection (two tasks whose time ranges intersect) and more useful conflict messages. I would also replace the pattern-matched preference rule parser with a structured format — for example a `PreferenceRule` dataclass with `task_type`, `operator`, and `cutoff_time` fields — so rules like "no walks after 21:00" are validated at entry time rather than silently ignored if the phrasing doesn't match. Finally, I'd add a simple edit/delete flow for tasks in the UI; currently there is no way to remove a task once it has been added.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important thing I learned is that AI suggestions need to be evaluated against the specific invariants of the algorithm, not just their surface-level readability. When the AI suggested replacing `fit_to_time_budget`'s explicit loop with `itertools.accumulate`, the suggestion looked cleaner — but `accumulate` computes a prefix sum, which would have permanently excluded any task following a large rejected one, breaking the gap-filling behavior entirely. Catching that required understanding *why* the explicit loop was written the way it was, not just reading the code. AI is most useful for generating options quickly; the developer's job is to know which option is actually correct.

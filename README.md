@@ -1,6 +1,71 @@
 # PawPal+ (Module 2 Project)
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**PawPal+** is a Streamlit app that helps a busy pet owner build a realistic daily care schedule. Enter your pets, add tasks with durations and priorities, set your available time, and get a conflict-aware plan in one click — with plain-English explanations for every decision.
+
+---
+
+## Features
+
+### 📸 Demo
+
+<a href="pawpal_demo.png" target="_blank"><img src='pawpal_demo.png'>
+
+<a href="/pawpal_demo.png" target="_blank"><img src='/pawpal_demo.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
+
+### Owner & constraint management
+
+Define your daily time budget (minutes available), a per-day task cap, and free-text preference rules such as `"no walks after 21:00"`. All settings persist in Streamlit session state for the life of the browser tab.
+
+### Multi-pet support
+
+Add any number of pets (dog, cat, or other) with name, species, age, and optional health notes. Each pet maintains its own independent task list; the scheduler aggregates across all pets automatically.
+
+### Task library
+
+Create tasks of five types — `walk`, `feed`, `med`, `groom`, `enrichment` — each with a duration, priority (`high / medium / low`), preferred time window, required flag, and recurrence frequency.
+
+### Priority-ranked scheduling
+
+`Planner.rank_tasks` sorts all due tasks by `required` flag first, then by priority (`high → medium → low`), so critical tasks like medications are always considered before optional ones.
+
+### Time-budget fitting
+
+`Planner.fit_to_time_budget` uses a greedy O(n) pass to select as many tasks as possible within the owner's available minutes and daily task cap. Tasks that don't fit are recorded as *deferred* with a plain-English reason (e.g. "needs 40 min, only 10 min left") rather than silently dropped. Gap-filling is supported: a smaller lower-priority task can still be picked up after a large one is skipped.
+
+### Chronological ordering
+
+`Planner.sort_by_time` sorts any task list by named time window (`morning → midday → afternoon → evening → any`) so the final schedule reads in the order the owner will actually do things. Unknown window labels sort last rather than raising an error.
+
+### Daily recurrence
+
+`CareTask.mark_completed` uses `timedelta` to automatically advance `next_due_on` after each completion:
+
+- **daily** → next day
+- **twice_daily** → same day after the first dose; next day after the second
+- **weekly** → seven days later
+
+A completed task disappears from today's plan and reappears automatically on the correct future date.
+
+### Flexible task filtering
+
+`Planner.filter_tasks` accepts keyword-only arguments (`pet`, `completed_on`, `pending_on`, `task_type`) that can be combined freely. The live filter panel in the UI uses this to answer questions like "what walk tasks does Mochi still have today?"
+
+### Conflict detection
+
+`Planner.detect_conflicts` returns warning strings for four problem types — never crashes the app:
+
+| Warning | Meaning |
+| --- | --- |
+| 🕐 Window overload | A single time slot has more than 60 minutes of tasks |
+| 🔁 Same-pet overlap | One pet has two or more tasks in the same window simultaneously |
+| ⚡ Cross-pet collision | Two different pets both have required tasks in the same window |
+| 🚫 Preference violation | A task type is placed in a window the owner has ruled out |
+
+### Schedule blocks display
+
+The generated plan is grouped into time-window cards (`Morning`, `Midday`, `Afternoon`, `Evening`) so the owner sees a scannable daily structure, not just a flat list.
+
+---
 
 ## Scenario
 
