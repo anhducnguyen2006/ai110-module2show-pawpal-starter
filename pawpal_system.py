@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
@@ -356,11 +357,9 @@ class Planner:
                     task_to_pet[id(t)] = pet.name
 
         # --- 1. Window overload -------------------------------------------
-        window_minutes: dict[str, int] = {}
+        window_minutes: defaultdict[str, int] = defaultdict(int)
         for task in plan.scheduled_tasks:
-            window_minutes[task.time_window] = (
-                window_minutes.get(task.time_window, 0) + task.duration_minutes
-            )
+            window_minutes[task.time_window] += task.duration_minutes
         for window, total in window_minutes.items():
             if total > _WINDOW_CAPACITY_MINUTES:
                 issues.append(
@@ -371,11 +370,10 @@ class Planner:
         # --- 2. Same-pet overlap ------------------------------------------
         # Group scheduled tasks by (pet_name, time_window).
         # Any bucket with more than one task means that pet has simultaneous tasks.
-        pet_window_tasks: dict[tuple[str, str], list[CareTask]] = {}
+        pet_window_tasks: defaultdict[tuple[str, str], list[CareTask]] = defaultdict(list)
         for task in plan.scheduled_tasks:
             pet_name = task_to_pet.get(id(task), "unknown pet")
-            key = (pet_name, task.time_window)
-            pet_window_tasks.setdefault(key, []).append(task)
+            pet_window_tasks[(pet_name, task.time_window)].append(task)
 
         for (pet_name, window), tasks in pet_window_tasks.items():
             if len(tasks) > 1:
@@ -389,11 +387,11 @@ class Planner:
         # --- 3. Cross-pet collision ----------------------------------------
         # If two different pets both have a required task in the same window,
         # the owner cannot attend to both simultaneously.
-        window_required_pets: dict[str, list[str]] = {}
+        window_required_pets: defaultdict[str, list[str]] = defaultdict(list)
         for task in plan.scheduled_tasks:
             if task.required:
                 pet_name = task_to_pet.get(id(task), "unknown pet")
-                window_required_pets.setdefault(task.time_window, []).append(pet_name)
+                window_required_pets[task.time_window].append(pet_name)
 
         for window, pet_names in window_required_pets.items():
             unique_pets = list(dict.fromkeys(pet_names))   # preserve order, deduplicate

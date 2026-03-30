@@ -43,6 +43,18 @@ Three changes were made after reviewing the skeleton against the UI and scheduli
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
 
+**Tradeoff 1 — Time windows are labels, not clock intervals.**
+
+The scheduler assigns tasks to named slots (`"morning"`, `"afternoon"`, `"evening"`) rather than specific start and end times like `08:00–08:30`. Conflict detection treats any two tasks sharing a window label as if they are simultaneous, which produces false positives: a pet owner can absolutely walk the dog at 8 am and feed the cat at 8:30 am — both are "morning" tasks but they do not actually overlap.
+
+This is reasonable for a pet care planning app because the goal is to give the owner a rough daily structure, not a minute-by-minute calendar. Requiring precise clock times would make data entry far more burdensome and would give a false sense of precision (the owner does not know in advance whether the dog walk will take 20 or 35 minutes). The window-label approach is honest about that uncertainty, at the cost of occasional spurious warnings that the owner can safely ignore.
+
+**Tradeoff 2 — Greedy selection is not optimal packing.**
+
+`fit_to_time_budget` picks tasks in priority order and takes each one if it still fits in the time budget. This is O(n) but does not guarantee the maximum number of tasks or maximum value. Example: budget = 50 min, tasks = [A = 40 min high, B = 30 min medium, C = 20 min medium]. Greedy picks A (40 min used), then skips B and C because neither fits in the remaining 10 min. The optimal solution would be B + C = 50 min (two tasks instead of one). For a home pet-care scenario with fewer than ~15 tasks per day, greedy is fast and predictable enough; a full knapsack solver would be harder to debug and explain to the user without meaningful benefit.
+
+**AI review note (section 3 cross-reference):** When asked to simplify `fit_to_time_budget`, the AI suggested replacing the explicit loop with `itertools.accumulate`. That version was more concise but semantically incorrect — accumulate computes a running prefix sum and would silently exclude tasks C and D even if they individually fit after a large task B was skipped. The explicit loop was kept because correctness outweighs brevity here. The `defaultdict` suggestion for `detect_conflicts` was accepted because it genuinely improved readability (`window_minutes[w] += n` vs `window_minutes.get(w, 0) + n`) without any behavioral change.
+
 ---
 
 ## 3. AI Collaboration
