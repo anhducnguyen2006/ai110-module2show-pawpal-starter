@@ -2,22 +2,39 @@ from datetime import date
 from pawpal_system import CareTask, Pet, Owner, Constraint, Planner
 
 
+# ---------------------------------------------------------------------------
+# Display helpers
+# ---------------------------------------------------------------------------
+
+def print_task_list(title: str, tasks: list[CareTask]) -> None:
+    width = 52
+    print(f"\n  {title}")
+    print(f"  {'─' * (width - 2)}")
+    if not tasks:
+        print("  (none)")
+        return
+    print(f"  {'TASK':<14} {'WINDOW':<12} {'PRIORITY':<8}  {'MIN':>4}  REQ")
+    print(f"  {'─'*14} {'─'*12} {'─'*8}  {'─'*4}  {'─'*3}")
+    for t in tasks:
+        print(
+            f"  {t.task_type:<14} {t.time_window:<12} {t.priority:<8}"
+            f"  {t.duration_minutes:>4}  {'yes' if t.required else 'no'}"
+        )
+
+
 def print_schedule(plan) -> None:
     width = 52
     today_str = plan.plan_date.strftime("%A, %B %d %Y")
-
     print()
     print("=" * width)
     print(f"  PawPal+  |  Today's Schedule  |  {today_str}")
     print("=" * width)
 
-    # Schedule blocks (grouped by time window)
     if plan.schedule_blocks:
         for block in plan.schedule_blocks:
             print(f"  {block}")
     print()
 
-    # Scheduled tasks table
     print(f"  {'TASK':<14} {'TIME':>6}  {'PRIORITY':<8}  {'WINDOW'}")
     print(f"  {'-'*14} {'-'*6}  {'-'*8}  {'-'*12}")
     for task in plan.scheduled_tasks:
@@ -31,70 +48,53 @@ def print_schedule(plan) -> None:
     print(f"  Time used : {plan.total_minutes_used} min")
     print(f"  Summary   : {plan.rationale}")
 
-    # Deferred tasks (if any)
     if plan.deferred_tasks:
         print()
         print("  DEFERRED / SKIPPED:")
         for task, reason in plan.deferred_tasks:
             print(f"  - {task.task_type:<14} ({reason})")
 
+    if plan.conflicts:
+        print()
+        print("  CONFLICTS DETECTED:")
+        for c in plan.conflicts:
+            print(f"  ! {c}")
+
     print("=" * width)
     print("  * = required task")
     print("=" * width)
-    print()
 
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     today = date.today()
+    planner = Planner()
 
     # --- Pets ---
     mochi = Pet(name="Mochi", species="Dog", age=3, health_notes="Allergic to chicken")
     luna  = Pet(name="Luna",  species="Cat", age=5, health_notes="Needs joint supplement")
 
-    # --- Tasks for Mochi ---
-    mochi.add_task(CareTask(
-        task_type="walk", duration_minutes=25, priority="high",
-        frequency="daily", time_window="morning", required=True,
-        notes="At least 20 min, avoid the park on rainy days",
-    ))
-    mochi.add_task(CareTask(
-        task_type="feed", duration_minutes=10, priority="high",
-        frequency="twice_daily", time_window="morning", required=True,
-    ))
-    mochi.add_task(CareTask(
-        task_type="feed", duration_minutes=10, priority="high",
-        frequency="twice_daily", time_window="evening", required=True,
-    ))
-    mochi.add_task(CareTask(
-        task_type="med", duration_minutes=5, priority="high",
-        frequency="daily", time_window="morning", required=True,
-        notes="Allergy pill — hide in a treat",
-    ))
-    mochi.add_task(CareTask(
-        task_type="enrichment", duration_minutes=15, priority="medium",
-        frequency="daily", time_window="afternoon", required=False,
-        notes="Puzzle feeder or sniff mat",
-    ))
+    # Tasks added INTENTIONALLY OUT OF ORDER to prove sort_by_time works
+    # Mochi — evening tasks first, morning last
+    mochi.add_task(CareTask("enrichment", 15, "medium", "daily",       "afternoon", required=False,
+                             notes="Puzzle feeder or sniff mat"))
+    mochi.add_task(CareTask("feed",       10, "high",   "twice_daily", "evening",   required=True))
+    mochi.add_task(CareTask("walk",       25, "high",   "daily",       "morning",   required=True,
+                             notes="At least 20 min"))
+    mochi.add_task(CareTask("med",         5, "high",   "daily",       "morning",   required=True,
+                             notes="Allergy pill"))
+    mochi.add_task(CareTask("feed",       10, "high",   "twice_daily", "morning",   required=True))
 
-    # --- Tasks for Luna ---
-    luna.add_task(CareTask(
-        task_type="feed", duration_minutes=5, priority="high",
-        frequency="twice_daily", time_window="morning", required=True,
-    ))
-    luna.add_task(CareTask(
-        task_type="feed", duration_minutes=5, priority="high",
-        frequency="twice_daily", time_window="evening", required=True,
-    ))
-    luna.add_task(CareTask(
-        task_type="med", duration_minutes=5, priority="high",
-        frequency="daily", time_window="morning", required=True,
-        notes="Joint supplement mixed into wet food",
-    ))
-    luna.add_task(CareTask(
-        task_type="groom", duration_minutes=20, priority="low",
-        frequency="weekly", time_window="afternoon", required=False,
-        notes="Brush coat — she tolerates it after a play session",
-    ))
+    # Luna — also scrambled: groom (afternoon) → feed (morning) → med (morning) → feed (evening)
+    luna.add_task(CareTask("groom",  20, "low",    "weekly",      "afternoon", required=False,
+                            notes="Brush coat"))
+    luna.add_task(CareTask("feed",    5, "high",   "twice_daily", "morning",   required=True))
+    luna.add_task(CareTask("med",     5, "high",   "daily",       "morning",   required=True,
+                            notes="Joint supplement in wet food"))
+    luna.add_task(CareTask("feed",    5, "high",   "twice_daily", "evening",   required=True))
 
     # --- Owner ---
     jordan = Owner(
@@ -110,8 +110,55 @@ def main() -> None:
     jordan.add_pet(mochi)
     jordan.add_pet(luna)
 
-    # --- Generate and display plan ---
-    plan = Planner().generate_plan(jordan, today)
+    # Collect every task across both pets for demo purposes
+    all_tasks = mochi.tasks + luna.tasks
+
+    # -----------------------------------------------------------------------
+    # Demo 1 — sort_by_time
+    # Tasks were added in scrambled order; sort_by_time reorders them
+    # -----------------------------------------------------------------------
+    print("\n" + "=" * 52)
+    print("  DEMO 1 — sort_by_time()")
+    print("=" * 52)
+    print_task_list("As-added order (scrambled):", all_tasks)
+    sorted_tasks = planner.sort_by_time(all_tasks)
+    print_task_list("After sort_by_time():", sorted_tasks)
+
+    # -----------------------------------------------------------------------
+    # Demo 2 — filter_tasks
+    # -----------------------------------------------------------------------
+    print("\n" + "=" * 52)
+    print("  DEMO 2 — filter_tasks()")
+    print("=" * 52)
+
+    # Mark Mochi's walk as done today to make the completed filter interesting
+    mochi.tasks[2].mark_completed(today)   # walk
+
+    print_task_list(
+        "filter: pet=Mochi (all Mochi tasks):",
+        planner.filter_tasks(all_tasks, pet=mochi),
+    )
+    print_task_list(
+        "filter: completed_on=today:",
+        planner.filter_tasks(all_tasks, completed_on=today),
+    )
+    print_task_list(
+        "filter: pending_on=today (due but not yet done):",
+        planner.filter_tasks(all_tasks, pending_on=today),
+    )
+    print_task_list(
+        "filter: task_type='feed':",
+        planner.filter_tasks(all_tasks, task_type="feed"),
+    )
+    print_task_list(
+        "filter: pet=Luna + pending_on=today (combined):",
+        planner.filter_tasks(all_tasks, pet=luna, pending_on=today),
+    )
+
+    # -----------------------------------------------------------------------
+    # Demo 3 — full schedule
+    # -----------------------------------------------------------------------
+    plan = planner.generate_plan(jordan, today)
     print_schedule(plan)
 
 
