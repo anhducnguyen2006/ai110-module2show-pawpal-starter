@@ -8,8 +8,6 @@
 
 ### 📸 Demo
 
-<a href="pawpal_demo.png" target="_blank"><img src='pawpal_demo.png'>
-
 <a href="/pawpal_demo.png" target="_blank"><img src='/pawpal_demo.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
 
 ### Owner & constraint management
