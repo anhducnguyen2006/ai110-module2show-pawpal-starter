@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from pawpal_system import CareTask, Pet, Owner, Constraint, Planner
 
 
@@ -114,6 +114,35 @@ def main() -> None:
     all_tasks = mochi.tasks + luna.tasks
 
     # -----------------------------------------------------------------------
+    # Demo 0 — auto-rescheduling via timedelta
+    # -----------------------------------------------------------------------
+    print("\n" + "=" * 52)
+    print("  DEMO 0 — auto-rescheduling with timedelta")
+    print("=" * 52)
+
+    demo_tasks = [
+        CareTask("walk",  25, "high", "daily",       "morning"),
+        CareTask("groom", 20, "low",  "weekly",      "afternoon"),
+        CareTask("feed",  10, "high", "twice_daily",  "morning"),
+    ]
+
+    print(f"\n  {'TASK':<10} {'FREQ':<12} {'mark_completed(today)':<22} {'next_due_on'}")
+    print(f"  {'─'*10} {'─'*12} {'─'*22} {'─'*14}")
+    for t in demo_tasks:
+        t.mark_completed(today)
+        print(f"  {t.task_type:<10} {t.frequency:<12} is_due(today)={str(t.is_due(today)):<9}  {t.next_due_on}")
+
+    # twice_daily needs a second call to fully complete it
+    feed_task = demo_tasks[2]
+    feed_task.mark_completed(today)
+    print(f"  {'feed':<10} {'(2nd dose)':<12} is_due(today)={str(feed_task.is_due(today)):<9}  {feed_task.next_due_on}")
+
+    tomorrow = today + timedelta(days=1)
+    print(f"\n  Checking is_due(tomorrow={tomorrow}):")
+    for t in demo_tasks:
+        print(f"    {t.task_type:<10} {t.frequency:<12} → {t.is_due(tomorrow)}")
+
+    # -----------------------------------------------------------------------
     # Demo 1 — sort_by_time
     # Tasks were added in scrambled order; sort_by_time reorders them
     # -----------------------------------------------------------------------
@@ -160,6 +189,58 @@ def main() -> None:
     # -----------------------------------------------------------------------
     plan = planner.generate_plan(jordan, today)
     print_schedule(plan)
+
+    # -----------------------------------------------------------------------
+    # Demo 4 — conflict detection
+    # Two tasks intentionally stacked in the same window for the same pet,
+    # plus a cross-pet required collision, plus a preference-rule violation.
+    # -----------------------------------------------------------------------
+    print("\n" + "=" * 52)
+    print("  DEMO 4 — conflict detection warnings")
+    print("=" * 52)
+
+    rex   = Pet(name="Rex",   species="Dog", age=2)
+    kitty = Pet(name="Kitty", species="Cat", age=4)
+
+    # Same-pet overlap: Rex has walk + groom both in "morning"
+    rex.add_task(CareTask("walk",  30, "high",   "daily", "morning", required=True))
+    rex.add_task(CareTask("groom", 20, "medium", "daily", "morning", required=False,
+                           notes="Intentionally same window as walk"))
+
+    # Cross-pet collision: Kitty also has a required task in "morning"
+    kitty.add_task(CareTask("feed", 10, "high", "daily", "morning", required=True))
+    kitty.add_task(CareTask("med",   5, "high", "daily", "morning", required=True))
+
+    # Preference-rule violation: walk in "evening" when rule says "no walks after 21:00"
+    rex.add_task(CareTask("walk", 20, "high", "daily", "evening", required=True,
+                           notes="Evening walk — violates preference rule"))
+
+    sam = Owner(
+        name="Sam",
+        constraint=Constraint(
+            available_minutes=120,
+            max_tasks_per_day=10,
+            preference_rules=["no walks after 21:00"],
+        ),
+    )
+    sam.add_pet(rex)
+    sam.add_pet(kitty)
+
+    conflict_plan = planner.generate_plan(sam, today)
+
+    print("\n  Scheduled tasks:")
+    for t in conflict_plan.scheduled_tasks:
+        pet_label = next(
+            (p.name for p in sam.pets if t in p.tasks), "?"
+        )
+        print(f"    [{pet_label}] {t.task_type:<12} window={t.time_window}")
+
+    print()
+    if conflict_plan.conflicts:
+        for warning in conflict_plan.conflicts:
+            print(f"  {warning}")
+    else:
+        print("  No conflicts detected.")
 
 
 if __name__ == "__main__":

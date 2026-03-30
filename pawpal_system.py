@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 
@@ -22,30 +22,37 @@ class CareTask:
     notes: str = ""
     last_completed_on: Optional[date] = None
     completions_today: int = 0            # tracks twice_daily completions within one day
+    next_due_on: Optional[date] = None    # auto-set by mark_completed via timedelta
 
     def is_due(self, on_date: date) -> bool:
         """Return True if this task still needs to be done on on_date."""
-        if self.last_completed_on is None:
-            return True
-        days_since = (on_date - self.last_completed_on).days
-        if self.frequency == "daily":
-            return days_since >= 1
-        if self.frequency == "twice_daily":
-            # Not yet done today → due; done once today → still due for second round
-            if self.last_completed_on != on_date:
-                return True
-            return self.completions_today < 2
-        if self.frequency == "weekly":
-            return days_since >= 7
-        return True                       # unknown frequency → always treat as due
+        # Once mark_completed has run, next_due_on is the authoritative trigger date.
+        if self.next_due_on is not None:
+            return on_date >= self.next_due_on
+        # Fresh task — never been completed yet.
+        return True
 
     def mark_completed(self, on_date: date) -> None:
-        """Record a completion; increments counter when done multiple times on the same day."""
+        """Record a completion and auto-schedule the next occurrence using timedelta."""
         if self.last_completed_on == on_date:
             self.completions_today += 1
         else:
             self.last_completed_on = on_date
             self.completions_today = 1
+
+        # Calculate next_due_on based on frequency
+        if self.frequency == "daily":
+            self.next_due_on = on_date + timedelta(days=1)
+        elif self.frequency == "twice_daily":
+            # Still due today after the first completion; tomorrow after the second
+            if self.completions_today < 2:
+                self.next_due_on = on_date               # same day → still due
+            else:
+                self.next_due_on = on_date + timedelta(days=1)
+        elif self.frequency == "weekly":
+            self.next_due_on = on_date + timedelta(days=7)
+        else:
+            self.next_due_on = on_date + timedelta(days=1)  # safe default
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +264,7 @@ class Planner:
                 blocks.append(f"{window.capitalize()}: {task_str}")
 
         plan.schedule_blocks = blocks
-        plan.conflicts = self.detect_conflicts(plan, constraint)
+        plan.conflicts = self.detect_conflicts(plan, constraint, owner)
         plan.rationale = (
             f"Scheduled {len(scheduled)} of {len(ranked)} due tasks, "
             f"using {plan.total_minutes_used} of {constraint.available_minutes} available minutes. "
@@ -323,11 +330,32 @@ class Planner:
                 minutes_used += task.duration_minutes
         return selected
 
-    def detect_conflicts(self, plan: DailyPlan, constraint: Constraint) -> list[str]:
-        """Flag window overloads and preference-rule violations in a scheduled plan."""
+    def detect_conflicts(
+        self,
+        plan: DailyPlan,
+        constraint: Constraint,
+        owner: Optional[Owner] = None,
+    ) -> list[str]:
+        """Return warning strings for scheduling problems; never raises an exception.
+
+        Checks (in order):
+          1. Window overload — too many minutes in one time window.
+          2. Same-pet overlap — one pet has two or more tasks in the same window.
+          3. Cross-pet collision — two different pets both have required tasks
+             in the same window (owner must be in two places at once).
+          4. Preference-rule violations — task type banned in a time window.
+        """
         issues: list[str] = []
 
-        # 1. Window overload: a single window exceeds _WINDOW_CAPACITY_MINUTES
+        # Build a task-id → pet-name lookup so checks 2 & 3 can name the pet.
+        # Falls back to "unknown" when owner is not supplied.
+        task_to_pet: dict[int, str] = {}
+        if owner is not None:
+            for pet in owner.pets:
+                for t in pet.tasks:
+                    task_to_pet[id(t)] = pet.name
+
+        # --- 1. Window overload -------------------------------------------
         window_minutes: dict[str, int] = {}
         for task in plan.scheduled_tasks:
             window_minutes[task.time_window] = (
@@ -336,24 +364,59 @@ class Planner:
         for window, total in window_minutes.items():
             if total > _WINDOW_CAPACITY_MINUTES:
                 issues.append(
-                    f"{window.capitalize()} window overloaded: "
-                    f"{total} min scheduled (>{_WINDOW_CAPACITY_MINUTES} min threshold)"
+                    f"WARNING: {window.capitalize()} window overloaded — "
+                    f"{total} min scheduled (threshold: {_WINDOW_CAPACITY_MINUTES} min)"
                 )
 
-        # 2. Preference-rule violations
-        # Parses rules of the form "no <task_type> after HH:MM" and flags
-        # tasks of that type placed in the evening window.
+        # --- 2. Same-pet overlap ------------------------------------------
+        # Group scheduled tasks by (pet_name, time_window).
+        # Any bucket with more than one task means that pet has simultaneous tasks.
+        pet_window_tasks: dict[tuple[str, str], list[CareTask]] = {}
+        for task in plan.scheduled_tasks:
+            pet_name = task_to_pet.get(id(task), "unknown pet")
+            key = (pet_name, task.time_window)
+            pet_window_tasks.setdefault(key, []).append(task)
+
+        for (pet_name, window), tasks in pet_window_tasks.items():
+            if len(tasks) > 1:
+                names = " + ".join(t.task_type for t in tasks)
+                issues.append(
+                    f"WARNING: {pet_name} has {len(tasks)} tasks in the "
+                    f"{window} window at the same time ({names}) — "
+                    f"consider spreading them across windows"
+                )
+
+        # --- 3. Cross-pet collision ----------------------------------------
+        # If two different pets both have a required task in the same window,
+        # the owner cannot attend to both simultaneously.
+        window_required_pets: dict[str, list[str]] = {}
+        for task in plan.scheduled_tasks:
+            if task.required:
+                pet_name = task_to_pet.get(id(task), "unknown pet")
+                window_required_pets.setdefault(task.time_window, []).append(pet_name)
+
+        for window, pet_names in window_required_pets.items():
+            unique_pets = list(dict.fromkeys(pet_names))   # preserve order, deduplicate
+            if len(unique_pets) > 1:
+                pet_list = " and ".join(unique_pets)
+                issues.append(
+                    f"WARNING: {pet_list} both have required tasks in the "
+                    f"{window} window — owner may not be able to attend to both at once"
+                )
+
+        # --- 4. Preference-rule violations ----------------------------------
+        # Parses "no <task_type> after HH:MM" and flags that type in evening.
         for rule in constraint.preference_rules:
             rule_lower = rule.lower()
             if rule_lower.startswith("no "):
                 words = rule_lower.split()
                 if len(words) >= 2:
-                    restricted_type = words[1].rstrip("s")  # normalise plural
+                    restricted = words[1].rstrip("s")
                     for task in plan.scheduled_tasks:
-                        if (task.task_type.rstrip("s") == restricted_type
+                        if (task.task_type.rstrip("s") == restricted
                                 and task.time_window == "evening"):
                             issues.append(
-                                f"Preference rule '{rule}' may be violated: "
+                                f"WARNING: Preference rule '{rule}' may be violated — "
                                 f"'{task.task_type}' is placed in the evening window"
                             )
 
