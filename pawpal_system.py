@@ -218,7 +218,19 @@ class Planner:
     """Scheduling engine: reads owner + pet data and produces a DailyPlan."""
 
     def generate_plan(self, owner: Owner, on_date: date) -> DailyPlan:
-        """Build and return a DailyPlan for on_date using owner.pets and owner.constraint."""
+        """Build and return a DailyPlan for on_date.
+
+        Pipeline:
+          1. Collect all due tasks from every pet via owner.get_all_due_tasks.
+          2. rank_tasks  — sort by required flag then priority (high → low).
+          3. fit_to_time_budget — greedy selection within available_minutes and
+             max_tasks_per_day; unselected tasks are recorded as deferred.
+          4. Sort selected tasks by time window for chronological output.
+          5. Build human-readable schedule_blocks grouped by window.
+          6. detect_conflicts — flag overloads, overlaps, and rule violations.
+
+        Falls back to a 120-minute budget if owner.constraint is not set.
+        """
         constraint = owner.constraint or Constraint(available_minutes=120)
 
         all_due = owner.get_all_due_tasks(on_date)
@@ -320,7 +332,14 @@ class Planner:
         )
 
     def fit_to_time_budget(self, tasks: list[CareTask], constraint: Constraint) -> list[CareTask]:
-        """Select tasks that fit within available_minutes and max_tasks_per_day."""
+        """Greedily select tasks that fit within available_minutes and max_tasks_per_day.
+
+        Evaluates tasks in the order given (pass a ranked list for best results).
+        A task that does not fit is skipped rather than halting the loop, so
+        smaller lower-priority tasks can still be picked up after a large one is
+        rejected. Runs in O(n). Does not guarantee the globally optimal set —
+        see reflection.md section 2b for the intentional tradeoff.
+        """
         selected: list[CareTask] = []
         minutes_used = 0
         for task in tasks:

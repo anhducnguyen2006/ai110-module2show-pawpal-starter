@@ -32,6 +32,33 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+## Smarter Scheduling
+
+The core scheduling logic lives in `pawpal_system.py`. Beyond a basic task list, the planner includes several algorithms that make the schedule more useful for a real pet owner.
+
+**Priority-ranked selection**
+`Planner.rank_tasks` sorts all due tasks by `required` flag first, then priority (`high → medium → low`). This ensures critical tasks (medications, feeding) are always considered before optional ones.
+
+**Time-budget fitting**
+`Planner.fit_to_time_budget` uses a greedy O(n) pass to select as many tasks as possible within the owner's available minutes and daily task cap. Tasks that don't fit are deferred with a plain-English reason rather than silently dropped.
+
+**Chronological ordering**
+`Planner.sort_by_time` sorts any task list by named time window (`morning → midday → afternoon → evening → any`) using a lambda key, so the final schedule reads in the order the owner will actually do things.
+
+**Flexible filtering**
+`Planner.filter_tasks` accepts keyword-only arguments (`pet`, `completed_on`, `pending_on`, `task_type`) that can be combined freely. Useful for answering questions like "what does Mochi still need today?" or "which tasks are already done?"
+
+**Recurring task auto-scheduling**
+`CareTask.mark_completed` uses `timedelta` to automatically set `next_due_on` after each completion — one day later for `daily` tasks, seven days later for `weekly`, and same-day / next-day for `twice_daily` depending on whether the first or second dose has been given.
+
+**Conflict detection**
+`Planner.detect_conflicts` returns warning strings (never crashes) for four problem types:
+
+- Window overload — more than 60 minutes of tasks in a single time slot
+- Same-pet overlap — one pet has two or more tasks in the same window simultaneously
+- Cross-pet collision — two different pets both have required tasks in the same window
+- Preference-rule violations — a task type is scheduled in a window the owner has ruled out
+
 ### Suggested workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.
